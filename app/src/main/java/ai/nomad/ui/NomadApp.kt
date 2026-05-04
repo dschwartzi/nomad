@@ -65,7 +65,9 @@ fun NomadApp(
     requestPermissions: () -> Unit,
     requestDefaultSms: () -> Unit,
 ) {
-    var tab by remember { mutableStateOf(Tab.Status) }
+    var tab by remember {
+        mutableStateOf(if (app.prefs.isConfigured()) Tab.Status else Tab.Settings)
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Nomad") }) },
