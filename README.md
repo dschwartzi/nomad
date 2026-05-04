@@ -32,16 +32,30 @@ Your recipients always see your real number. You never touch a travel SIM.
    `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
    in a browser. Look for `"chat":{"id":12345678,...}` — that number is your chat ID.
 
-### 2. Build & install on H
+### 2. Install on H
 
-Open `nomad/` in **Android Studio** (Koala or newer). First sync will download Gradle + AGP.
+**Easiest — download the APK on H itself:**
+
+1. On H, open the [latest release page](https://github.com/dschwartzi/nomad/releases/latest) in your browser.
+2. Tap **app-debug.apk** to download.
+3. When prompted, allow installs from this source (Settings → enable → back → Install).
+4. Open **Nomad** from the launcher.
+
+**Alternative — install from your computer via ADB:**
 
 ```bash
-# or from CLI if you have gradle wrapper set up:
+adb install app-debug.apk
+```
+
+**Build from source (developers):**
+
+```bash
 ./gradlew :app:installDebug
 ```
 
-Install onto your home phone over USB or wireless ADB. **Sideload only** — this will never be Play Store material because Play restricts SMS apps.
+or open the project in Android Studio (Koala+) and hit **Run**.
+
+> **Note:** This is sideload-only. Google Play essentially won't approve any third-party SMS app, so there will never be a Play Store listing.
 
 ### 3. Configure on H
 
@@ -107,6 +121,19 @@ app/src/main/java/ai/nomad/
 - No cloud. No analytics. No account.
 
 **Important:** anyone with your bot token can impersonate the bot. If you suspect leakage, revoke via @BotFather (`/revoke`) and rotate.
+
+## Sharing this with someone else
+
+If a friend or family member wants to use Nomad on their phone, they should **create their own Telegram bot**. One bot per person — don't share bots.
+
+Why: a Telegram bot has one update stream and one token. Anyone with the token can read every message sent to that bot. Two people sharing one bot = each can read the other's SMS.
+
+What to share:
+- The [release page link](https://github.com/dschwartzi/nomad/releases/latest) so they can install the APK
+- This README so they can follow setup
+- **Not** your bot token, **not** your chat ID
+
+They'll create their own bot via @BotFather, get their own chat ID, and configure their own H phone. Two completely separate bridges. Total privacy.
 
 ## Privacy caveats
 
