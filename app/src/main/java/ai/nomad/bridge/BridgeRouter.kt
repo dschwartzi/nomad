@@ -6,6 +6,7 @@ import ai.nomad.sms.SmsSender
 import ai.nomad.telegram.TelegramBot
 import ai.nomad.telegram.TgMessage
 import ai.nomad.util.Logger
+import ai.nomad.util.PhoneUtil
 import android.content.Context
 
 /**
@@ -152,29 +153,72 @@ class BridgeRouter(
     // --- SMS side --------------------------------------------------------
 
     suspend fun onInboundSms(msgId: Long, address: String, body: String, timestamp: Long) {
-        if (chatId.isBlank()) {
-            Logger.w("Inbound SMS but Telegram chatId not configured; skipping forward")
-            return
-        }
         val name = ContactResolver.nameFor(context, address)
-        val header = if (name != null) {
-            "📩 <b>${escape(name)}</b> <code>${escape(address)}</code>"
-        } else {
-            "📩 <code>${escape(address)}</code>"
+
+        // Try Telegram first.
+        var tgMsgId: Long? = null
+        if (chatId.isNotBlank()) {
+            val header = if (name != null) {
+                "📩 <b>${escape(name)}</b> <code>${escape(address)}</code>"
+            } else {
+                "📩 <code>${escape(address)}</code>"
+            }
+            val out = "$header\n\n${escape(body)}"
+            tgMsgId = bot.sendMessage(chatId, out)
         }
-        val out = "$header\n\n${escape(body)}"
-        val tgMsgId = bot.sendMessage(chatId, out)
+
         if (tgMsgId != null) {
             app.db.messageDao().markForwarded(msgId, tgMsgId)
             app.prefs.activeThreadAddress = address
-        }
-        app.db.eventDao().insert(
-            EventEntity(
-                timestamp = System.currentTimeMillis(),
-                level = "INFO",
-                message = "Forwarded SMS from $address to Telegram (tgId=$tgMsgId)"
+            app.db.eventDao().insert(
+                EventEntity(
+                    timestamp = System.currentTimeMillis(),
+                    level = "INFO",
+                    message = "Forwarded SMS from $address to Telegram (tgId=$tgMsgId)"
+                )
             )
-        )
+            return
+        }
+
+        // Telegram unavailable (or unconfigured) — try SMS fallback.
+        if (app.prefs.smsFallbackEnabled) {
+            val dest = app.prefs.smsFallbackDestination
+            if (dest.isNotBlank() && !PhoneUtil.sameNumber(dest, address)) {
+                val displayName = name ?: address
+                val fallbackBody = "[from $displayName ($address)] $body"
+                val result = SmsSender.send(context, dest, fallbackBody)
+                app.db.eventDao().insert(
+                    EventEntity(
+                        timestamp = System.currentTimeMillis(),
+                        level = if (result.isSuccess) "INFO" else "WARN",
+                        message = if (result.isSuccess)
+                            "SMS fallback: forwarded from $address to $dest"
+                        else
+                            "SMS fallback FAILED from $address to $dest: ${result.exceptionOrNull()?.message}"
+                    )
+                )
+                if (result.isSuccess) {
+                    app.prefs.activeThreadAddress = address
+                    return
+                }
+            } else {
+                app.db.eventDao().insert(
+                    EventEntity(
+                        timestamp = System.currentTimeMillis(),
+                        level = "WARN",
+                        message = "Telegram forward failed and no SMS fallback destination set"
+                    )
+                )
+            }
+        } else {
+            app.db.eventDao().insert(
+                EventEntity(
+                    timestamp = System.currentTimeMillis(),
+                    level = "WARN",
+                    message = "Telegram forward failed; SMS fallback disabled"
+                )
+            )
+        }
     }
 
     // --- Helpers ---------------------------------------------------------

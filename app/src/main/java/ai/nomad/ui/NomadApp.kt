@@ -3,6 +3,8 @@ package ai.nomad.ui
 import ai.nomad.NomadApp
 import ai.nomad.bridge.BridgeService
 import ai.nomad.telegram.TelegramBot
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -237,11 +239,18 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
 
+    var trustedNums by remember { mutableStateOf(app.prefs.trustedTravelNumbersRaw) }
+    var smsPrefix by remember { mutableStateOf(app.prefs.smsCommandPrefix) }
+    var smsFallback by remember { mutableStateOf(app.prefs.smsFallbackEnabled) }
+    var fallbackDest by remember { mutableStateOf(app.prefs.smsFallbackDestination) }
+
+    val scroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxSize()
             .padding(padding)
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(scroll),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SectionCard("Telegram bot") {
@@ -294,6 +303,61 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
                 "Get your bot token from @BotFather. Send /start to your bot, then " +
                     "open https://api.telegram.org/bot<TOKEN>/getUpdates in a browser " +
                     "to find your chat ID.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        SectionCard("SMS fallback (when Telegram is down)") {
+            OutlinedTextField(
+                value = trustedNums,
+                onValueChange = { trustedNums = it },
+                label = { Text("Trusted travel numbers (comma-separated)") },
+                placeholder = { Text("+1555..., +972..., ...") },
+                singleLine = false,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = smsPrefix,
+                onValueChange = { smsPrefix = it },
+                label = { Text("Command prefix") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Auto-fallback inbound SMS when Telegram fails",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Switch(checked = smsFallback, onCheckedChange = { smsFallback = it })
+            }
+            OutlinedTextField(
+                value = fallbackDest,
+                onValueChange = { fallbackDest = it.trim() },
+                label = { Text("Fallback destination (auto-updated)") },
+                placeholder = { Text("Auto-set to last SMS command sender") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = {
+                app.prefs.trustedTravelNumbersRaw = trustedNums
+                app.prefs.smsCommandPrefix = smsPrefix.ifBlank { "#" }
+                app.prefs.smsFallbackEnabled = smsFallback
+                app.prefs.smsFallbackDestination = fallbackDest
+            }) { Text("Save SMS settings") }
+
+            Text(
+                "From a trusted travel number, text your home phone:\n" +
+                    "${smsPrefix}send +15551234567 hello\n" +
+                    "${smsPrefix}reply text  •  ${smsPrefix}to +1555... (or name)\n" +
+                    "${smsPrefix}last [N]  •  ${smsPrefix}status  •  ${smsPrefix}help\n\n" +
+                    "If Telegram is unreachable and fallback is on, inbound SMS are forwarded via SMS " +
+                    "to the fallback destination (auto-set to the number that last issued a command).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

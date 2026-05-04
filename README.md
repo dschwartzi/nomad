@@ -84,6 +84,24 @@ or open the project in Android Studio (Koala+) and hit **Run**.
 | *reply to forwarded SMS* | Respond to that specific sender |
 | *any plain text* | Reply to current active thread |
 
+## SMS fallback (works without internet)
+
+If Telegram is unreachable (censored network, no data), Nomad automatically falls back to SMS. You configure a list of **trusted travel numbers** in Settings; from those numbers you can text H with a `#` command prefix:
+
+| SMS command | Effect |
+|---|---|
+| `#send +15551234567 hello` | Send SMS from H to a number |
+| `#send mom hello` | Send SMS to a contact name |
+| `#reply hello` | Reply to the active thread |
+| `#to mom` | Set active thread |
+| `#last 5` | Last 5 messages in/out (reply via SMS) |
+| `#status` | Bridge status |
+| `#help` | Command reference |
+
+When enabled, **inbound SMS that can't reach Telegram** are forwarded via SMS to the most recent trusted travel number that issued a command. Each leg is one SMS from H's SIM, so watch carrier SMS costs — but it works with zero internet on either end.
+
+How to set up: Settings → **SMS fallback** section → add your travel number to the allowlist → Save. On your travel SIM, text H: `#help` to confirm it's working.
+
 ## Architecture
 
 ```

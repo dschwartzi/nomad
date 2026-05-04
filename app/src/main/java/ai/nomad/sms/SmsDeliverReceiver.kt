@@ -56,6 +56,13 @@ class SmsDeliverReceiver : BroadcastReceiver() {
     ) {
         Logger.i("SMS in from $address: ${body.take(60)}")
 
+        // 0. If this looks like a #command from a trusted travel number, handle + consume.
+        //    (Do NOT write to system inbox or forward to Telegram — it's a control message.)
+        if (SmsCommandHandler.tryHandle(context, address, body)) {
+            Logger.i("Handled as SMS command; not forwarding")
+            return
+        }
+
         // 1. Write to the system SMS provider (as default SMS app, we're responsible for this)
         writeToSystemInbox(context, address, body, timestamp)
 
