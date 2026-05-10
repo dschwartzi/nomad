@@ -45,16 +45,24 @@ class BridgeService : Service() {
 
         val app = applicationContext as NomadApp
         val token = app.prefs.telegramBotToken
-        if (token.isBlank()) {
-            updateNotif("Bridge inactive — no Telegram token configured")
+        val telegramOn = token.isNotBlank()
+        val relayOn = app.prefs.isRelayPaired()
+
+        if (!telegramOn && !relayOn) {
+            updateNotif("Bridge inactive — no transport configured (Telegram or pairing)")
             return START_STICKY
         }
-        if (bot == null) bot = TelegramBot(token)
-        if (router == null) router = BridgeRouter(this, app, bot!!)
+
+        if (telegramOn && bot == null) bot = TelegramBot(token)
+        // Router needs a bot for Telegram features; if Telegram off, supply a dummy that won't be used.
+        if (router == null) {
+            val effectiveBot = bot ?: TelegramBot("__disabled__")
+            router = BridgeRouter(this, app, effectiveBot)
+        }
 
         when (action) {
             ACTION_INBOUND_SMS -> handleInboundSms(intent)
-            ACTION_START -> ensurePolling()
+            ACTION_START -> if (telegramOn) ensurePolling()
             ACTION_STOP -> {
                 pollJob?.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)

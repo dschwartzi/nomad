@@ -10,6 +10,20 @@
 local.properties
 app/build/
 app/release/
+travel/build/
+shared/build/
+functions/node_modules/
+functions/lib/
+functions/.env
+functions/.env.local
+functions/.env.*.local
+# Firebase project identifiers — each developer deploys their own.
+.firebaserc
+app/google-services.json
+travel/google-services.json
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
 *.keystore
 *.jks
 secrets.properties

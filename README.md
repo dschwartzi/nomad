@@ -1,10 +1,17 @@
 # Nomad
 
-Your home phone's SMS, wherever you are — via Telegram.
+Your home phone's SMS, wherever you are.
+
+Two transports, your pick:
+
+1. **Nomad Travel app** (preferred) — companion Android app on your travel phone. Real chat UI, contact list synced from home, tap-to-dial, push notifications. Travels through your own Firebase Cloud Messaging relay.
+2. **Telegram bot** — text-based control via any Telegram client. Useful when you don't have your travel phone but you do have a laptop.
+
+You can configure either, both, or none.
 
 ## What it does
 
-Nomad turns your **home Android phone (H)** into a Telegram-controlled SMS bridge:
+Nomad turns your **home Android phone (H)** into a remote-controlled SMS bridge:
 
 - Every SMS that arrives at H is forwarded to your Telegram.
 - Reply in Telegram → H sends the SMS back from your real number.
@@ -20,7 +27,93 @@ Sender ──SMS to H#──▶  H phone  ──Telegram──▶  You (anywhere
 
 Your recipients always see your real number. You never touch a travel SIM.
 
-## Setup (10 minutes)
+## Travel-app setup
+
+### Prerequisites: deploy your own relay
+
+This repo does not ship any Firebase project identifiers, API keys, or URLs. You create your own Firebase project, deploy the Cloud Functions, and put your project-specific config files in place locally (they are `.gitignore`d).
+
+**A. Create and configure a Firebase project**
+
+1. Create a Firebase project at <https://console.firebase.google.com>. Free tier is fine. Note the project ID.
+2. Enable: **Firestore (Native mode)**, **Cloud Messaging**, **Cloud Functions** (needs the Blaze plan — still free within monthly quota).
+3. Register an **Android app** with package name `ai.nomad` and download `google-services.json` → save as `app/google-services.json`.
+4. Register a second **Android app** with package name `ai.nomad.travel` → download `google-services.json` → save as `travel/google-services.json`.
+5. Copy `.firebaserc.example` → `.firebaserc` and replace the placeholder with your project ID.
+
+**B. Deploy the relay**
+
+```bash
+cd functions && npm install && cd ..
+firebase login
+# Generate your account key:
+openssl rand -base64 48 | tr -d '/+=\n' | head -c 40; echo
+# Put it in functions/.env (this file is gitignored):
+echo "ACCOUNT_KEY=<the-40-char-string-you-just-generated>" > functions/.env
+firebase deploy --only functions,firestore:indexes,firestore:rules
+```
+
+Your relay URL will be printed at the end — looks like `https://us-central1-<your-project>.cloudfunctions.net`. Save that URL and the account key. You'll type both into the phones.
+
+**C. Build the APKs**
+
+```bash
+./gradlew assembleDebug
+```
+
+The APKs are at `app/build/outputs/apk/debug/app-debug.apk` and `travel/build/outputs/apk/debug/travel-debug.apk`.
+
+### Security model, briefly
+
+Every call to the relay must carry `X-Account-Key: <your key>`. Requests without it (or with a wrong key) return `401` immediately. The key is a Cloud Functions env var; rotating means editing `functions/.env` and redeploying.
+
+The account key is **never committed, never in the APK, never in logs**. You hold it. You type it into both of your phones through a channel you control. No one else can talk to your relay, which means no one can spam your Firebase billing, enumerate your pairing codes, or attempt to pair with your home phone.
+
+### On the phones
+
+1. Install `app-debug.apk` on **H**. Grant SMS permissions, set as default SMS app.
+2. Install `travel-debug.apk` on **T**.
+3. On H: Settings → **Relay server** → paste the URL and account key → **Save**.
+4. On H: Settings → **Travel device pairing** → **Start pairing**. A 6-digit code appears.
+5. On T: open the app → paste the same URL and account key, then type the 6-digit code → **Pair**.
+6. On T: **Contacts** → **Sync from home**. Your home contacts appear.
+7. Send, receive, carry on.
+
+### Architecture
+
+```
+Sender ──SMS to H#──▶  H phone  ──FCM relay──▶  T phone (Nomad Travel)
+                          ▲                          │
+                          └────── FCM relay ─────────┘
+                     (SMS from H# goes out to sender)
+```
+
+The relay is a Firebase Cloud Function in your own GCP project, forwarding small JSON payloads via FCM data messages. End-to-end:
+
+- **H → relay → T:** inbound SMS, send-status acks, contacts list, message history.
+- **T → relay → H:** outbound SMS commands, history requests, contact-sync requests.
+
+Two layers of auth:
+
+1. **Account key** (`X-Account-Key` header) — a shared secret you set once on the server and type into both phones. Gates the relay itself. Without it, every endpoint returns 401. This is what keeps strangers from using your Firebase billing if the APK or URL leaks.
+2. **Per-pair secret** — a 32-byte random string issued at pair time, stored in `EncryptedSharedPreferences` on both phones. Required on every `send` / `updateToken` call. Even someone who steals your account key cannot read or inject into your specific bridge without this.
+
+### What the Travel app can and can't do
+
+- ✅ See incoming SMS in real time, with push.
+- ✅ Send SMS — recipient sees H's number.
+- ✅ Browse and search contacts pulled from H.
+- ✅ Tap-to-dial — opens T's dialer with the number prefilled. **The call uses T's SIM**, so the recipient sees T's number, not H's. Bridging audio so calls "appear from H" needs a SIP/VoIP setup, which is out of scope.
+- ❌ MMS / images.
+
+### Rotating the account key
+
+If you think the key leaked:
+
+1. Generate a new one, update `functions/.env`, `firebase deploy --only functions`.
+2. On each phone: Settings → Relay server → paste the new key → Save. Pairing survives; nothing else needs changing.
+
+## Telegram-bot setup (alternative, ~10 minutes)
 
 ### 1. Create a Telegram bot
 

@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "bridges",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "code", "order": "ASCENDING" },
+        { "fieldPath": "codeExpiresAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

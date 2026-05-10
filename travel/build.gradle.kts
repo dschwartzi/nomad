@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "ai.nomad"
+    namespace = "ai.nomad.travel"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "ai.nomad"
+        applicationId = "ai.nomad.travel"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -51,31 +51,24 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // Room
+    // Room (local message + contact cache)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
-    // Networking (Telegram)
+    // Networking + serialization
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // Firebase Cloud Messaging
+    implementation(platform("com.google.firebase:firebase-bom:33.3.0"))
+    implementation("com.google.firebase:firebase-messaging")
 
     // Encrypted prefs
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
-    // Firebase Cloud Messaging (relay transport)
-    implementation(platform("com.google.firebase:firebase-bom:33.3.0"))
-    implementation("com.google.firebase:firebase-messaging")
-
     // Shared relay protocol
     implementation(project(":shared"))
 
-    // DataStore (used for plain settings flow)
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-
     debugImplementation("androidx.compose.ui:ui-tooling")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
 }

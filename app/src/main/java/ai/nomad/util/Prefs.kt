@@ -70,8 +70,54 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_SMS_FALLBACK_DEST, "") ?: ""
         set(value) { sp.edit().putString(KEY_SMS_FALLBACK_DEST, value).apply() }
 
+    // --- Relay (FCM) settings ---
+
+    /** Pairing ID assigned by relay server once paired with the other phone. */
+    var relayPairingId: String
+        get() = sp.getString(KEY_RELAY_PAIRING_ID, "") ?: ""
+        set(value) { sp.edit().putString(KEY_RELAY_PAIRING_ID, value).apply() }
+
+    /** Shared secret for authenticating with relay server. */
+    var relaySecret: String
+        get() = sp.getString(KEY_RELAY_SECRET, "") ?: ""
+        set(value) { sp.edit().putString(KEY_RELAY_SECRET, value).apply() }
+
+    /** "home" on H phone, "travel" on T phone. */
+    var relayRole: String
+        get() = sp.getString(KEY_RELAY_ROLE, "home") ?: "home"
+        set(value) { sp.edit().putString(KEY_RELAY_ROLE, value).apply() }
+
+    /** Last known FCM token for this device. */
+    var fcmToken: String
+        get() = sp.getString(KEY_FCM_TOKEN, "") ?: ""
+        set(value) { sp.edit().putString(KEY_FCM_TOKEN, value).apply() }
+
+    /** Relay base URL (entered by user — never bundled in source). */
+    var relayBaseUrl: String
+        get() = sp.getString(KEY_RELAY_BASE_URL, "") ?: ""
+        set(value) { sp.edit().putString(KEY_RELAY_BASE_URL, value).apply() }
+
+    /** Shared account key for the relay (X-Account-Key header). Entered by user. */
+    var relayAccountKey: String
+        get() = sp.getString(KEY_RELAY_ACCOUNT_KEY, "") ?: ""
+        set(value) { sp.edit().putString(KEY_RELAY_ACCOUNT_KEY, value).apply() }
+
+    /** Both URL + account key must be set before we can talk to the relay at all. */
+    fun hasRelayCredentials(): Boolean =
+        relayBaseUrl.isNotBlank() && relayAccountKey.isNotBlank()
+
+    fun isRelayPaired(): Boolean =
+        hasRelayCredentials() && relayPairingId.isNotBlank() && relaySecret.isNotBlank()
+
+    fun clearRelayPairing() {
+        sp.edit()
+            .remove(KEY_RELAY_PAIRING_ID)
+            .remove(KEY_RELAY_SECRET)
+            .apply()
+    }
+
     fun isConfigured(): Boolean =
-        telegramBotToken.isNotBlank() && telegramChatId.isNotBlank()
+        (telegramBotToken.isNotBlank() && telegramChatId.isNotBlank()) || isRelayPaired()
 
     companion object {
         private const val KEY_TG_TOKEN = "tg_token"
@@ -83,5 +129,11 @@ class Prefs(context: Context) {
         private const val KEY_SMS_PREFIX = "sms_command_prefix"
         private const val KEY_SMS_FALLBACK = "sms_fallback_enabled"
         private const val KEY_SMS_FALLBACK_DEST = "sms_fallback_dest"
+        private const val KEY_RELAY_PAIRING_ID = "relay_pairing_id"
+        private const val KEY_RELAY_SECRET = "relay_secret"
+        private const val KEY_RELAY_ROLE = "relay_role"
+        private const val KEY_FCM_TOKEN = "fcm_token"
+        private const val KEY_RELAY_BASE_URL = "relay_base_url"
+        private const val KEY_RELAY_ACCOUNT_KEY = "relay_account_key"
     }
 }

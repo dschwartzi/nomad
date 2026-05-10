@@ -1,0 +1,174 @@
+package ai.nomad.relay
+
+import ai.nomad.NomadApp
+import ai.nomad.bridge.ContactResolver
+import ai.nomad.data.ConversationEntity
+import ai.nomad.data.MessageEntity
+import ai.nomad.shared.relay.RelayClient
+import ai.nomad.shared.relay.RelayContact
+import ai.nomad.shared.relay.RelayHistoryItem
+import ai.nomad.shared.relay.RelayMessage
+import ai.nomad.sms.SmsSender
+import ai.nomad.util.Logger
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.provider.ContactsContract
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+
+/**
+ * Handles inbound relay payloads on the **Home (H)** side.
+ * The Travel app sends commands; H executes (SMS, contact lookup, history) and replies via [RelayClient.send].
+ */
+object RelayHandler {
+
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
+    private val scope = CoroutineScope(Dispatchers.IO)
+
+    /** Called by [NomadFcmService] when an FCM message arrives on H. */
+    fun onPayload(context: Context, payloadJson: String) {
+        val app = context.applicationContext as NomadApp
+        val msg = try {
+            json.decodeFromString(RelayMessage.serializer(), payloadJson)
+        } catch (t: Throwable) {
+            Logger.w("Bad relay payload: ${t.message}")
+            return
+        }
+        Logger.i("Relay <- ${msg.type}")
+        scope.launch {
+            try {
+                when (msg.type) {
+                    RelayMessage.Type.SMS_OUT -> handleSmsOut(context, app, msg)
+                    RelayMessage.Type.HISTORY_REQUEST -> handleHistoryRequest(app, msg)
+                    RelayMessage.Type.CONTACTS_REQUEST -> handleContactsRequest(context, app)
+                    RelayMessage.Type.PING -> sendOnH(app, RelayMessage(type = RelayMessage.Type.PONG))
+                    else -> Logger.w("Unhandled relay type: ${msg.type}")
+                }
+            } catch (t: Throwable) {
+                Logger.e("RelayHandler error for ${msg.type}", t)
+            }
+        }
+    }
+
+    private suspend fun handleSmsOut(context: Context, app: NomadApp, msg: RelayMessage) {
+        val address = msg.address?.takeIf { it.isNotBlank() }
+        val body = msg.body?.takeIf { it.isNotBlank() }
+        val clientId = msg.clientId
+        if (address == null || body == null) {
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.SEND_STATUS,
+                clientId = clientId, ok = false, error = "missing address or body"
+            ))
+            return
+        }
+        val result = SmsSender.send(context, address, body)
+        if (result.isSuccess) {
+            // Record outbound in our DB
+            val ts = System.currentTimeMillis()
+            app.db.messageDao().insert(
+                MessageEntity(address = address, body = body, timestamp = ts, direction = MessageEntity.OUT)
+            )
+            val existing = app.db.conversationDao().get(address)
+            app.db.conversationDao().upsert(
+                ConversationEntity(
+                    address = address,
+                    displayName = existing?.displayName ?: ContactResolver.nameFor(context, address),
+                    lastMessageTime = ts,
+                    lastMessagePreview = body.take(120),
+                    unread = existing?.unread ?: 0
+                )
+            )
+            app.prefs.activeThreadAddress = address
+        }
+        sendOnH(app, RelayMessage(
+            type = RelayMessage.Type.SEND_STATUS,
+            clientId = clientId,
+            ok = result.isSuccess,
+            error = result.exceptionOrNull()?.message,
+            address = address,
+            ts = System.currentTimeMillis()
+        ))
+    }
+
+    private suspend fun handleHistoryRequest(app: NomadApp, msg: RelayMessage) {
+        val address = msg.address ?: return
+        val limit = (msg.limit ?: 50).coerceIn(1, 100)
+        val recent = app.db.messageDao().recentFor(address, limit)
+        val items = recent.map { RelayHistoryItem(body = it.body, ts = it.timestamp, direction = it.direction) }
+        sendOnH(app, RelayMessage(
+            type = RelayMessage.Type.HISTORY_RESPONSE,
+            address = address,
+            messages = items
+        ))
+    }
+
+    private suspend fun handleContactsRequest(context: Context, app: NomadApp) {
+        val contacts = readAllContacts(context)
+        if (contacts.isEmpty()) {
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.CONTACTS_RESPONSE,
+                contacts = emptyList(), chunkIndex = 0, totalChunks = 1
+            ))
+            return
+        }
+        // Chunk to fit FCM 4KB. Roughly cap at 60 contacts/chunk.
+        val chunkSize = 60
+        val chunks = contacts.chunked(chunkSize)
+        chunks.forEachIndexed { idx, chunk ->
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.CONTACTS_RESPONSE,
+                contacts = chunk,
+                chunkIndex = idx,
+                totalChunks = chunks.size
+            ))
+        }
+    }
+
+    private fun readAllContacts(context: Context): List<RelayContact> {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED) return emptyList()
+
+        val byContactId = LinkedHashMap<Long, MutableList<String>>()
+        val nameById = HashMap<Long, String>()
+        try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                ),
+                null, null,
+                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val cid = c.getLong(0)
+                    val name = c.getString(1) ?: continue
+                    val number = c.getString(2)?.trim().orEmpty()
+                    if (number.isEmpty()) continue
+                    nameById[cid] = name
+                    byContactId.getOrPut(cid) { mutableListOf() }.add(number)
+                }
+            }
+        } catch (t: Throwable) {
+            Logger.w("Contacts read failed: ${t.message}")
+            return emptyList()
+        }
+        return byContactId.entries.map { (cid, nums) ->
+            RelayContact(name = nameById[cid] ?: "(no name)", numbers = nums.distinct())
+        }
+    }
+
+    /** Convenience: send a payload from H to T. */
+    suspend fun sendOnH(app: NomadApp, msg: RelayMessage) {
+        val prefs = app.prefs
+        if (!prefs.isRelayPaired()) return
+        val client = RelayClient(prefs.relayBaseUrl, prefs.relayAccountKey)
+        val res = client.send(prefs.relayPairingId, prefs.relaySecret, prefs.relayRole, msg)
+        if (res.isFailure) Logger.w("Relay send failed: ${res.exceptionOrNull()?.message}")
+    }
+}

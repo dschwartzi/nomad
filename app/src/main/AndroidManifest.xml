@@ -96,6 +96,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- FCM relay service -->
+        <service
+            android:name=".relay.NomadFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <!-- Boot receiver: restart bridge after reboot -->
         <receiver
             android:name=".bridge.BootReceiver"

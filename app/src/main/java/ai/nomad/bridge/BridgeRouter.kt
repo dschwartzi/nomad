@@ -2,6 +2,8 @@ package ai.nomad.bridge
 
 import ai.nomad.NomadApp
 import ai.nomad.data.EventEntity
+import ai.nomad.relay.RelayHandler
+import ai.nomad.shared.relay.RelayMessage
 import ai.nomad.sms.SmsSender
 import ai.nomad.telegram.TelegramBot
 import ai.nomad.telegram.TgMessage
@@ -154,6 +156,20 @@ class BridgeRouter(
 
     suspend fun onInboundSms(msgId: Long, address: String, body: String, timestamp: Long) {
         val name = ContactResolver.nameFor(context, address)
+
+        // Push via relay (FCM) to the travel app, if paired. This is independent of Telegram.
+        if (app.prefs.isRelayPaired()) {
+            runCatching {
+                RelayHandler.sendOnH(app, RelayMessage(
+                    type = RelayMessage.Type.SMS_IN,
+                    address = address,
+                    name = name,
+                    body = body,
+                    ts = timestamp,
+                    id = msgId
+                ))
+            }.onFailure { Logger.w("Relay forward failed: ${it.message}") }
+        }
 
         // Try Telegram first.
         var tgMsgId: Long? = null

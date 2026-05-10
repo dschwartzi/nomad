@@ -1,0 +1,81 @@
+package ai.nomad.shared.relay
+
+import kotlinx.serialization.Serializable
+
+/**
+ * Shared payload protocol between the Home (H) and Travel (T) apps.
+ * Carried inside FCM data messages as JSON in the `payload` field.
+ *
+ * Single envelope with optional fields (loose schema, but easy to evolve).
+ */
+@Serializable
+data class RelayMessage(
+    /** Message type. See [Type]. */
+    val type: String,
+
+    // SMS-related
+    val address: String? = null,
+    val name: String? = null,
+    val body: String? = null,
+    val ts: Long? = null,
+    val id: Long? = null,
+    /** Outbound client-generated id used to correlate ACKs. */
+    val clientId: String? = null,
+
+    // Ack / status
+    val ok: Boolean? = null,
+    val error: String? = null,
+
+    // History
+    val limit: Int? = null,
+    val messages: List<RelayHistoryItem>? = null,
+
+    // Contacts
+    val contacts: List<RelayContact>? = null,
+    val chunkIndex: Int? = null,
+    val totalChunks: Int? = null,
+
+    // Free-form for forward-compat
+    val text: String? = null
+) {
+    object Type {
+        /** H -> T : an inbound SMS arrived at home phone. */
+        const val SMS_IN = "sms_in"
+
+        /** T -> H : please send this SMS to `address`. */
+        const val SMS_OUT = "sms_out"
+
+        /** H -> T : ack for an `sms_out` (status of send attempt). */
+        const val SEND_STATUS = "send_status"
+
+        /** T -> H : give me last `limit` messages with `address`. */
+        const val HISTORY_REQUEST = "history_request"
+
+        /** H -> T : here are the messages. */
+        const val HISTORY_RESPONSE = "history_response"
+
+        /** T -> H : send me your contact list. */
+        const val CONTACTS_REQUEST = "contacts_request"
+
+        /** H -> T : a chunk of contacts. */
+        const val CONTACTS_RESPONSE = "contacts_response"
+
+        /** Either way: liveness probe / response. */
+        const val PING = "ping"
+        const val PONG = "pong"
+    }
+}
+
+@Serializable
+data class RelayHistoryItem(
+    val body: String,
+    val ts: Long,
+    /** 0 = inbound (received from `address`), 1 = outbound (sent to `address`). */
+    val direction: Int
+)
+
+@Serializable
+data class RelayContact(
+    val name: String,
+    val numbers: List<String>
+)

@@ -2,6 +2,7 @@ package ai.nomad.ui
 
 import ai.nomad.NomadApp
 import ai.nomad.bridge.BridgeService
+import ai.nomad.relay.PairingFlow
 import ai.nomad.telegram.TelegramBot
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -134,7 +135,7 @@ private fun StatusScreen(
             CheckRow("Nomad is default SMS app", isDefaultSms.value) {
                 OutlinedButton(onClick = requestDefaultSms) { Text("Set") }
             }
-            CheckRow("Telegram bot configured", configured) {
+            CheckRow("Transport configured (Telegram or paired travel app)", configured) {
                 Text("Go to Settings", style = MaterialTheme.typography.labelMedium)
             }
         }
@@ -244,6 +245,17 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
     var smsFallback by remember { mutableStateOf(app.prefs.smsFallbackEnabled) }
     var fallbackDest by remember { mutableStateOf(app.prefs.smsFallbackDestination) }
 
+    var paired by remember { mutableStateOf(app.prefs.isRelayPaired()) }
+    var pairingCode by remember { mutableStateOf<String?>(null) }
+    var pairingBusy by remember { mutableStateOf(false) }
+    var pairingMsg by remember { mutableStateOf<String?>(null) }
+
+    var relayUrl by remember { mutableStateOf(app.prefs.relayBaseUrl) }
+    var relayKey by remember { mutableStateOf(app.prefs.relayAccountKey) }
+    var relaySaveMsg by remember { mutableStateOf<String?>(null) }
+    val hasRelayCreds = relayUrl.isNotBlank() && relayKey.isNotBlank() &&
+        app.prefs.relayBaseUrl == relayUrl.trim() && app.prefs.relayAccountKey == relayKey.trim()
+
     val scroll = rememberScrollState()
     Column(
         Modifier
@@ -253,6 +265,113 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
             .verticalScroll(scroll),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        SectionCard("Relay server") {
+            OutlinedTextField(
+                value = relayUrl,
+                onValueChange = { relayUrl = it.trim() },
+                label = { Text("Relay base URL") },
+                placeholder = { Text("https://us-central1-yourproj.cloudfunctions.net") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = relayKey,
+                onValueChange = { relayKey = it.trim() },
+                label = { Text("Account key") },
+                placeholder = { Text("Shared secret, same on both phones") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                enabled = relayUrl.isNotBlank() && relayKey.isNotBlank(),
+                onClick = {
+                    app.prefs.relayBaseUrl = relayUrl.trim().trimEnd('/')
+                    app.prefs.relayAccountKey = relayKey.trim()
+                    relaySaveMsg = "Saved."
+                }
+            ) { Text("Save relay credentials") }
+            relaySaveMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text(
+                "Type the URL of your Cloud Functions endpoint and the account key you configured " +
+                    "on the relay server. Both must be identical on home and travel phones.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        SectionCard("Travel device pairing") {
+            if (paired) {
+                Text(
+                    "✅ Paired with travel device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF10B981)
+                )
+                Text(
+                    "Pairing ID: ${app.prefs.relayPairingId.take(8)}…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(onClick = {
+                    app.prefs.clearRelayPairing()
+                    paired = false
+                    pairingCode = null
+                    pairingMsg = "Unpaired."
+                }) { Text("Unpair") }
+            } else {
+                if (!hasRelayCreds) {
+                    Text(
+                        "Set the relay URL and account key above (and tap Save) before pairing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    "Install the Nomad Travel app on your travel phone, then tap below to start pairing. " +
+                        "A 6-digit code will appear — enter it on the travel phone within 10 minutes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                pairingCode?.let { code ->
+                    Text(
+                        code.toCharArray().joinToString(" "),
+                        style = MaterialTheme.typography.displayMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        "Enter this code on the travel phone.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Button(
+                    enabled = !pairingBusy && hasRelayCreds,
+                    onClick = {
+                        pairingBusy = true
+                        pairingCode = null
+                        pairingMsg = "Starting…"
+                        scope.launch {
+                            val res = PairingFlow.runHomePairing(
+                                app,
+                                onCode = { c -> pairingCode = c }
+                            )
+                            pairingBusy = false
+                            if (res.isSuccess) {
+                                paired = true
+                                pairingMsg = "✅ Paired!"
+                                pairingCode = null
+                                BridgeService.start(app)
+                            } else {
+                                pairingMsg = "❌ ${res.exceptionOrNull()?.message}"
+                            }
+                        }
+                    }
+                ) { Text(if (pairingBusy) "Waiting for travel device…" else "Start pairing") }
+            }
+            pairingMsg?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
         SectionCard("Telegram bot") {
             OutlinedTextField(
                 value = token,

@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Nomad"
 include(":app")
+include(":shared")
+include(":travel")
