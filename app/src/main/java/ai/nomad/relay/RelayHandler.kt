@@ -4,6 +4,8 @@ import ai.nomad.NomadApp
 import ai.nomad.bridge.ContactResolver
 import ai.nomad.data.ConversationEntity
 import ai.nomad.data.MessageEntity
+import ai.nomad.shared.relay.RelayBodyChunker
+import ai.nomad.shared.relay.RelayBodyReassembler
 import ai.nomad.shared.relay.RelayClient
 import ai.nomad.shared.relay.RelayContact
 import ai.nomad.shared.relay.RelayHistoryItem
@@ -28,14 +30,20 @@ object RelayHandler {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val reassembler = RelayBodyReassembler()
 
     /** Called by [NomadFcmService] when an FCM message arrives on H. */
     fun onPayload(context: Context, payloadJson: String) {
         val app = context.applicationContext as NomadApp
-        val msg = try {
+        val raw = try {
             json.decodeFromString(RelayMessage.serializer(), payloadJson)
         } catch (t: Throwable) {
             Logger.w("Bad relay payload: ${t.message}")
+            return
+        }
+        // Buffer multi-part body chunks until the full message is reconstructed.
+        val msg = reassembler.feed(raw) ?: run {
+            Logger.i("Relay <- ${raw.type} part ${raw.chunkIndex}/${raw.totalChunks} (buffered)")
             return
         }
         Logger.i("Relay <- ${msg.type}")
@@ -98,7 +106,13 @@ object RelayHandler {
         val address = msg.address ?: return
         val limit = (msg.limit ?: 50).coerceIn(1, 100)
         val recent = app.db.messageDao().recentFor(address, limit)
-        val items = recent.map { RelayHistoryItem(body = it.body, ts = it.timestamp, direction = it.direction) }
+        val items = recent.map {
+            // Per-item bodies can't be split across chunks (they're nested in a
+            // list), so truncate anything that would by itself blow the
+            // chunk budget. Real-time SMS uses full body chunking elsewhere.
+            val safe = if (it.body.length > 2500) it.body.take(2500) + "…[truncated, see home phone]" else it.body
+            RelayHistoryItem(body = safe, ts = it.timestamp, direction = it.direction)
+        }
         // SMS bodies can approach 160 chars each and users can pull up to 100
         // messages. Chunk by estimated serialized size so we never hit FCM's
         // 4 KB data-message limit (relay itself rejects >3500 bytes).
@@ -208,12 +222,18 @@ object RelayHandler {
         }
     }
 
-    /** Convenience: send a payload from H to T. */
+    /** Convenience: send a payload from H to T. Automatically splits oversized
+     *  bodies into chunked parts that the receiver reassembles transparently. */
     suspend fun sendOnH(app: NomadApp, msg: RelayMessage) {
         val prefs = app.prefs
         if (!prefs.isRelayPaired()) return
         val client = RelayClient(prefs.relayBaseUrl, prefs.relayAccountKey)
-        val res = client.send(prefs.relayPairingId, prefs.relaySecret, prefs.relayRole, msg)
-        if (res.isFailure) Logger.w("Relay send failed: ${res.exceptionOrNull()?.message}")
+        for (part in RelayBodyChunker.split(msg)) {
+            val res = client.send(prefs.relayPairingId, prefs.relaySecret, prefs.relayRole, part)
+            if (res.isFailure) {
+                Logger.w("Relay send failed: ${res.exceptionOrNull()?.message}")
+                return
+            }
+        }
     }
 }

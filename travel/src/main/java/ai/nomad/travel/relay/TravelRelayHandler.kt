@@ -1,5 +1,6 @@
 package ai.nomad.travel.relay
 
+import ai.nomad.shared.relay.RelayBodyReassembler
 import ai.nomad.shared.relay.RelayContact
 import ai.nomad.shared.relay.RelayMessage
 import ai.nomad.travel.MainActivity
@@ -35,11 +36,19 @@ object TravelRelayHandler {
     private var contactsExpected = 0
     private var contactsSeen = 0
 
+    private val reassembler = RelayBodyReassembler()
+
     fun onPayload(app: TravelApp, payloadJson: String) {
-        val msg = try {
+        val raw = try {
             json.decodeFromString(RelayMessage.serializer(), payloadJson)
         } catch (t: Throwable) {
             Log.w(TAG, "Bad payload: ${t.message}")
+            return
+        }
+        // Transparent multi-part body reassembly. List-level chunked messages
+        // (contacts/history) pass through unchanged because they don't set partKey.
+        val msg = reassembler.feed(raw) ?: run {
+            Log.i(TAG, "T <- ${raw.type} part ${raw.chunkIndex}/${raw.totalChunks} (buffered)")
             return
         }
         Log.i(TAG, "T <- ${msg.type}")

@@ -1,5 +1,6 @@
 package ai.nomad.travel.relay
 
+import ai.nomad.shared.relay.RelayBodyChunker
 import ai.nomad.shared.relay.RelayClient
 import ai.nomad.shared.relay.RelayMessage
 import ai.nomad.travel.TravelApp
@@ -12,13 +13,21 @@ object TravelRelay {
         return RelayClient(app.prefs.relayBaseUrl, app.prefs.accountKey)
     }
 
+    /** Sends [msg], automatically splitting oversized bodies into multi-part
+     *  chunks that the receiver reassembles transparently. Fails fast on the
+     *  first part that can't be sent. */
     suspend fun send(app: TravelApp, msg: RelayMessage): Result<Unit> {
         if (!app.prefs.isPaired()) return Result.failure(IllegalStateException("Not paired"))
-        return client(app).send(
-            pairingId = app.prefs.pairingId,
-            secret = app.prefs.secret,
-            role = "travel",
-            payload = msg
-        )
+        val c = client(app)
+        for (part in RelayBodyChunker.split(msg)) {
+            val res = c.send(
+                pairingId = app.prefs.pairingId,
+                secret = app.prefs.secret,
+                role = "travel",
+                payload = part
+            )
+            if (res.isFailure) return res
+        }
+        return Result.success(Unit)
     }
 }
