@@ -40,6 +40,12 @@ class TravelPrefs(context: Context) {
         get() = sp.getString(KEY_ACCOUNT_KEY, "") ?: ""
         set(v) { sp.edit().putString(KEY_ACCOUNT_KEY, v).apply() }
 
+    /** Wall-clock millis of last PONG received from home. Used by Settings to
+     *  confirm a Ping round-tripped. 0 = never. */
+    var lastPongAt: Long
+        get() = sp.getLong(KEY_LAST_PONG_AT, 0L)
+        set(v) { sp.edit().putLong(KEY_LAST_PONG_AT, v).apply() }
+
     fun hasRelayCredentials(): Boolean =
         relayBaseUrl.isNotBlank() && accountKey.isNotBlank()
 
@@ -56,5 +62,6 @@ class TravelPrefs(context: Context) {
         private const val KEY_FCM = "fcm_token"
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_ACCOUNT_KEY = "account_key"
+        private const val KEY_LAST_PONG_AT = "last_pong_at"
     }
 }

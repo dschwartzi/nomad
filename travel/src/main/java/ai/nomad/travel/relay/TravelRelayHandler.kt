@@ -50,7 +50,10 @@ object TravelRelayHandler {
                     RelayMessage.Type.SEND_STATUS -> handleSendStatus(app, msg)
                     RelayMessage.Type.HISTORY_RESPONSE -> handleHistoryResponse(app, msg)
                     RelayMessage.Type.CONTACTS_RESPONSE -> handleContactsResponse(app, msg)
-                    RelayMessage.Type.PONG -> Log.i(TAG, "PONG")
+                    RelayMessage.Type.PONG -> {
+                        Log.i(TAG, "PONG")
+                        app.prefs.lastPongAt = System.currentTimeMillis()
+                    }
                     else -> Log.w(TAG, "Unknown payload type: ${msg.type}")
                 }
             } catch (t: Throwable) {
@@ -94,10 +97,12 @@ object TravelRelayHandler {
     }
 
     private suspend fun handleHistoryResponse(app: TravelApp, msg: RelayMessage) {
-        // We only insert if address is empty in our DB so as not to duplicate.
         val address = msg.address ?: return
         val items = msg.messages ?: return
-        if (app.db.messageDao().countFor(address) > 0) return
+        val idx = msg.chunkIndex ?: 0
+        // Only the first chunk gets the duplicate-prevention check; follow-up
+        // chunks must always be inserted or we'd lose the tail of the history.
+        if (idx == 0 && app.db.messageDao().countFor(address) > 0) return
         for (it in items) {
             app.db.messageDao().insert(TMessage(
                 address = address,

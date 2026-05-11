@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -56,9 +57,33 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedButton(onClick = {
-                    scope.launch(Dispatchers.IO) {
-                        TravelRelay.send(app, RelayMessage(type = RelayMessage.Type.PING))
-                        withContext(Dispatchers.Main) { pingMsg = "Ping sent." }
+                    // Snapshot the "last pong" timestamp before we send, then poll
+                    // prefs for a fresh pong up to 10s. If it advances, it's a
+                    // true round-trip confirmation, not just a successful send.
+                    val before = app.prefs.lastPongAt
+                    val sentAt = System.currentTimeMillis()
+                    pingMsg = "Pinging…"
+                    scope.launch {
+                        val res = withContext(Dispatchers.IO) {
+                            TravelRelay.send(app, RelayMessage(type = RelayMessage.Type.PING))
+                        }
+                        if (res.isFailure) {
+                            pingMsg = "❌ Send failed: ${res.exceptionOrNull()?.message ?: "unknown"}"
+                            return@launch
+                        }
+                        // Poll for up to 10s for a fresher pong.
+                        var elapsed = 0L
+                        while (elapsed < 10_000L) {
+                            val after = app.prefs.lastPongAt
+                            if (after > before && after >= sentAt) {
+                                pingMsg = "✅ Home replied in ${after - sentAt} ms"
+                                return@launch
+                            }
+                            delay(200)
+                            elapsed += 200
+                        }
+                        pingMsg = "❌ No reply in 10s — home phone may be offline " +
+                            "or not receiving pushes."
                     }
                 }) { Text("Ping home phone") }
                 pingMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

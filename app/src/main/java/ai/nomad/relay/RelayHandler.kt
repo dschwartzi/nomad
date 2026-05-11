@@ -99,11 +99,28 @@ object RelayHandler {
         val limit = (msg.limit ?: 50).coerceIn(1, 100)
         val recent = app.db.messageDao().recentFor(address, limit)
         val items = recent.map { RelayHistoryItem(body = it.body, ts = it.timestamp, direction = it.direction) }
-        sendOnH(app, RelayMessage(
-            type = RelayMessage.Type.HISTORY_RESPONSE,
-            address = address,
-            messages = items
-        ))
+        // SMS bodies can approach 160 chars each and users can pull up to 100
+        // messages. Chunk by estimated serialized size so we never hit FCM's
+        // 4 KB data-message limit (relay itself rejects >3500 bytes).
+        val chunks = chunkBySize(items, budgetBytes = 2800) { it.body.length + 48 }
+        val total = chunks.size.coerceAtLeast(1)
+        if (chunks.isEmpty()) {
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.HISTORY_RESPONSE,
+                address = address, messages = emptyList(),
+                chunkIndex = 0, totalChunks = 1
+            ))
+            return
+        }
+        chunks.forEachIndexed { idx, chunk ->
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.HISTORY_RESPONSE,
+                address = address,
+                messages = chunk,
+                chunkIndex = idx,
+                totalChunks = total
+            ))
+        }
     }
 
     private suspend fun handleContactsRequest(context: Context, app: NomadApp) {
@@ -115,9 +132,11 @@ object RelayHandler {
             ))
             return
         }
-        // Chunk to fit FCM 4KB. Roughly cap at 60 contacts/chunk.
-        val chunkSize = 60
-        val chunks = contacts.chunked(chunkSize)
+        // Greedy size-based chunking — previous fixed 60-per-chunk could exceed
+        // the 3500 byte per-message limit when names/numbers were long.
+        val chunks = chunkBySize(contacts, budgetBytes = 2800) { c ->
+            c.name.length + c.numbers.sumOf { it.length + 3 } + 16
+        }
         chunks.forEachIndexed { idx, chunk ->
             sendOnH(app, RelayMessage(
                 type = RelayMessage.Type.CONTACTS_RESPONSE,
@@ -126,6 +145,32 @@ object RelayHandler {
                 totalChunks = chunks.size
             ))
         }
+    }
+
+    /** Greedy packer: splits [items] into chunks whose total [estimate] fits
+     *  under [budgetBytes]. A single item larger than the budget lives in its
+     *  own chunk (will still fail, but nothing we can do without truncation). */
+    private inline fun <T> chunkBySize(
+        items: List<T>,
+        budgetBytes: Int,
+        estimate: (T) -> Int
+    ): List<List<T>> {
+        if (items.isEmpty()) return emptyList()
+        val out = mutableListOf<MutableList<T>>()
+        var cur = mutableListOf<T>()
+        var curSize = 0
+        for (item in items) {
+            val s = estimate(item)
+            if (cur.isNotEmpty() && curSize + s > budgetBytes) {
+                out.add(cur)
+                cur = mutableListOf()
+                curSize = 0
+            }
+            cur.add(item)
+            curSize += s
+        }
+        if (cur.isNotEmpty()) out.add(cur)
+        return out
     }
 
     private fun readAllContacts(context: Context): List<RelayContact> {
