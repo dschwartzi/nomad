@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -244,6 +245,8 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
     var smsPrefix by remember { mutableStateOf(app.prefs.smsCommandPrefix) }
     var smsFallback by remember { mutableStateOf(app.prefs.smsFallbackEnabled) }
     var fallbackDest by remember { mutableStateOf(app.prefs.smsFallbackDestination) }
+    var fallbackOfflineMin by remember { mutableStateOf(app.prefs.smsFallbackOfflineMinutes.toString()) }
+    var fallbackAlways by remember { mutableStateOf(app.prefs.smsFallbackAlways) }
 
     var paired by remember { mutableStateOf(app.prefs.isRelayPaired()) }
     var pairingCode by remember { mutableStateOf<String?>(null) }
@@ -427,11 +430,92 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
             )
         }
 
-        SectionCard("SMS fallback (when Telegram is down)") {
+        SectionCard("SMS fallback") {
+            Text(
+                "When the Travel app appears offline, the Home phone can also " +
+                    "forward incoming SMS to a phone number of your choice " +
+                    "(e.g. your travel SIM, or a Twilio / DID number that " +
+                    "reaches you via another channel).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Last-seen indicator
+            val lastSeen = app.prefs.lastSeenTravelAt
+            val travelStatus = remember(lastSeen, fallbackOfflineMin) {
+                if (lastSeen == 0L) "Travel app: never seen"
+                else {
+                    val ageMin = (System.currentTimeMillis() - lastSeen) / 60_000
+                    val online = app.prefs.isTravelOnline()
+                    "Travel app: " + (if (online) "online" else "offline") +
+                        " (last seen ${ageMin}m ago)"
+                }
+            }
+            Text(
+                travelStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "SMS fallback enabled",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Switch(checked = smsFallback, onCheckedChange = { smsFallback = it })
+            }
+
+            OutlinedTextField(
+                value = fallbackDest,
+                onValueChange = { fallbackDest = it.trim() },
+                label = { Text("Fallback SMS number (e.g. Twilio/DID/travel SIM)") },
+                placeholder = { Text("+15551234567") },
+                singleLine = true,
+                enabled = smsFallback,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = fallbackOfflineMin,
+                onValueChange = { fallbackOfflineMin = it.filter { c -> c.isDigit() }.take(4) },
+                label = { Text("Treat Travel as offline after N minutes") },
+                placeholder = { Text("10") },
+                singleLine = true,
+                enabled = smsFallback && !fallbackAlways,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Always send fallback SMS (don't wait for offline)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Switch(
+                    checked = fallbackAlways,
+                    onCheckedChange = { fallbackAlways = it },
+                    enabled = smsFallback
+                )
+            }
+
+            HorizontalDivider()
+            Text(
+                "Trusted travel numbers (for #commands)",
+                style = MaterialTheme.typography.titleSmall
+            )
             OutlinedTextField(
                 value = trustedNums,
                 onValueChange = { trustedNums = it },
-                label = { Text("Trusted travel numbers (comma-separated)") },
+                label = { Text("Comma-separated") },
                 placeholder = { Text("+1555..., +972..., ...") },
                 singleLine = false,
                 modifier = Modifier.fillMaxWidth()
@@ -443,40 +527,21 @@ private fun SettingsScreen(app: NomadApp, padding: PaddingValues) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Auto-fallback inbound SMS when Telegram fails",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Switch(checked = smsFallback, onCheckedChange = { smsFallback = it })
-            }
-            OutlinedTextField(
-                value = fallbackDest,
-                onValueChange = { fallbackDest = it.trim() },
-                label = { Text("Fallback destination (auto-updated)") },
-                placeholder = { Text("Auto-set to last SMS command sender") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+
             Button(onClick = {
                 app.prefs.trustedTravelNumbersRaw = trustedNums
                 app.prefs.smsCommandPrefix = smsPrefix.ifBlank { "#" }
                 app.prefs.smsFallbackEnabled = smsFallback
                 app.prefs.smsFallbackDestination = fallbackDest
+                app.prefs.smsFallbackAlways = fallbackAlways
+                fallbackOfflineMin.toIntOrNull()?.let { app.prefs.smsFallbackOfflineMinutes = it }
             }) { Text("Save SMS settings") }
 
             Text(
                 "From a trusted travel number, text your home phone:\n" +
                     "${smsPrefix}send +15551234567 hello\n" +
                     "${smsPrefix}reply text  •  ${smsPrefix}to +1555... (or name)\n" +
-                    "${smsPrefix}last [N]  •  ${smsPrefix}status  •  ${smsPrefix}help\n\n" +
-                    "If Telegram is unreachable and fallback is on, inbound SMS are forwarded via SMS " +
-                    "to the fallback destination (auto-set to the number that last issued a command).",
+                    "${smsPrefix}last [N]  •  ${smsPrefix}status  •  ${smsPrefix}help",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

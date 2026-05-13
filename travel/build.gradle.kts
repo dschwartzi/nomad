@@ -14,8 +14,8 @@ android {
         applicationId = "ai.nomad.travel"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -50,6 +50,9 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // WorkManager (periodic heartbeat to home phone)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // Room (local message + contact cache)
     implementation("androidx.room:room-runtime:2.6.1")

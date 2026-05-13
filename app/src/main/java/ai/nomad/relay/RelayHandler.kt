@@ -41,6 +41,10 @@ object RelayHandler {
             Logger.w("Bad relay payload: ${t.message}")
             return
         }
+        // Any inbound payload from the relay means the Travel app is alive — record
+        // this even for in-progress chunks. Used for offline-detection / SMS fallback.
+        app.prefs.lastSeenTravelAt = System.currentTimeMillis()
+
         // Buffer multi-part body chunks until the full message is reconstructed.
         val msg = reassembler.feed(raw) ?: run {
             Logger.i("Relay <- ${raw.type} part ${raw.chunkIndex}/${raw.totalChunks} (buffered)")

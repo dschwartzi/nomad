@@ -193,47 +193,89 @@ class BridgeRouter(
                     message = "Forwarded SMS from $address to Telegram (tgId=$tgMsgId)"
                 )
             )
+            // Telegram delivered — Travel side will see it from Telegram. No SMS fallback needed.
             return
         }
 
-        // Telegram unavailable (or unconfigured) — try SMS fallback.
-        if (app.prefs.smsFallbackEnabled) {
-            val dest = app.prefs.smsFallbackDestination
-            if (dest.isNotBlank() && !PhoneUtil.sameNumber(dest, address)) {
-                val displayName = name ?: address
-                val fallbackBody = "[from $displayName ($address)] $body"
-                val result = SmsSender.send(context, dest, fallbackBody)
-                app.db.eventDao().insert(
-                    EventEntity(
-                        timestamp = System.currentTimeMillis(),
-                        level = if (result.isSuccess) "INFO" else "WARN",
-                        message = if (result.isSuccess)
-                            "SMS fallback: forwarded from $address to $dest"
-                        else
-                            "SMS fallback FAILED from $address to $dest: ${result.exceptionOrNull()?.message}"
-                    )
-                )
-                if (result.isSuccess) {
-                    app.prefs.activeThreadAddress = address
-                    return
-                }
-            } else {
-                app.db.eventDao().insert(
-                    EventEntity(
-                        timestamp = System.currentTimeMillis(),
-                        level = "WARN",
-                        message = "Telegram forward failed and no SMS fallback destination set"
-                    )
-                )
-            }
-        } else {
+        // No Telegram delivery. Decide whether to additionally route via SMS fallback.
+        //
+        // The relay (FCM) path is best-effort and was already attempted above. We can't
+        // get a real delivery receipt back from FCM, so we use a heartbeat-based heuristic:
+        // if the Travel app has pinged us within `smsFallbackOfflineMinutes`, we assume
+        // it received the relay push. Otherwise we additionally send the message via SMS
+        // to `smsFallbackDestination` so the user still gets it (e.g. via a Twilio/DID
+        // number that forwards it to wherever the user actually is).
+        if (!app.prefs.smsFallbackEnabled) {
             app.db.eventDao().insert(
                 EventEntity(
                     timestamp = System.currentTimeMillis(),
                     level = "WARN",
-                    message = "Telegram forward failed; SMS fallback disabled"
+                    message = "Telegram unavailable; SMS fallback disabled in settings"
                 )
             )
+            return
+        }
+
+        val dest = app.prefs.smsFallbackDestination
+        val always = app.prefs.smsFallbackAlways
+        val travelOnline = app.prefs.isTravelOnline()
+        val shouldFallback = always || !travelOnline
+
+        if (!shouldFallback) {
+            // Relay was attempted and Travel appears online — trust it.
+            app.db.eventDao().insert(
+                EventEntity(
+                    timestamp = System.currentTimeMillis(),
+                    level = "INFO",
+                    message = "SMS routed via relay only (travel online, last seen " +
+                        "${(System.currentTimeMillis() - app.prefs.lastSeenTravelAt) / 1000}s ago)"
+                )
+            )
+            return
+        }
+
+        if (dest.isBlank()) {
+            app.db.eventDao().insert(
+                EventEntity(
+                    timestamp = System.currentTimeMillis(),
+                    level = "WARN",
+                    message = "SMS fallback wanted (travel offline) but no destination configured"
+                )
+            )
+            return
+        }
+        if (PhoneUtil.sameNumber(dest, address)) {
+            // Don't echo a sender back to itself.
+            app.db.eventDao().insert(
+                EventEntity(
+                    timestamp = System.currentTimeMillis(),
+                    level = "WARN",
+                    message = "SMS fallback skipped: sender $address == fallback destination"
+                )
+            )
+            return
+        }
+
+        val displayName = name ?: address
+        val fallbackBody = "[from $displayName ($address)] $body"
+        val result = SmsSender.send(context, dest, fallbackBody)
+        val reason = when {
+            always -> "always-on"
+            !travelOnline && app.prefs.lastSeenTravelAt == 0L -> "travel never seen"
+            else -> "travel offline ${(System.currentTimeMillis() - app.prefs.lastSeenTravelAt) / 60_000}m"
+        }
+        app.db.eventDao().insert(
+            EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = if (result.isSuccess) "INFO" else "WARN",
+                message = if (result.isSuccess)
+                    "SMS fallback ($reason): forwarded from $address to $dest"
+                else
+                    "SMS fallback FAILED ($reason) from $address to $dest: ${result.exceptionOrNull()?.message}"
+            )
+        )
+        if (result.isSuccess) {
+            app.prefs.activeThreadAddress = address
         }
     }
 

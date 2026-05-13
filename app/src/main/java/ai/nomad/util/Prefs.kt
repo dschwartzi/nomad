@@ -65,10 +65,41 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_SMS_FALLBACK, true)
         set(value) { sp.edit().putBoolean(KEY_SMS_FALLBACK, value).apply() }
 
-    /** Auto-tracked: the travel number that most recently issued a command. SMS fallback goes here. */
+    /** Destination phone number for SMS fallback. Set explicitly in Settings, or
+     *  bootstrapped from the first #command sender. Once non-empty, command
+     *  handling will NOT overwrite it. */
     var smsFallbackDestination: String
         get() = sp.getString(KEY_SMS_FALLBACK_DEST, "") ?: ""
         set(value) { sp.edit().putString(KEY_SMS_FALLBACK_DEST, value).apply() }
+
+    /** If the Travel app hasn't been seen in this many minutes, treat it as
+     *  offline and route inbound SMS via the SMS fallback (in addition to the
+     *  relay, which is always attempted). */
+    var smsFallbackOfflineMinutes: Int
+        get() = sp.getInt(KEY_SMS_FALLBACK_OFFLINE_MIN, 10)
+        set(value) { sp.edit().putInt(KEY_SMS_FALLBACK_OFFLINE_MIN, value.coerceAtLeast(1)).apply() }
+
+    /** If true, send the SMS fallback for *every* inbound SMS, regardless of
+     *  whether the Travel app appears online. The relay path still runs in
+     *  parallel. */
+    var smsFallbackAlways: Boolean
+        get() = sp.getBoolean(KEY_SMS_FALLBACK_ALWAYS, false)
+        set(value) { sp.edit().putBoolean(KEY_SMS_FALLBACK_ALWAYS, value).apply() }
+
+    /** Wall-clock millis of the most recent payload we received from the Travel
+     *  app over the relay (any message type — PING, SMS_OUT, etc). 0 = never. */
+    var lastSeenTravelAt: Long
+        get() = sp.getLong(KEY_LAST_SEEN_TRAVEL_AT, 0L)
+        set(value) { sp.edit().putLong(KEY_LAST_SEEN_TRAVEL_AT, value).apply() }
+
+    /** True if we believe the Travel app is currently reachable (i.e. it has
+     *  contacted us within the configured offline threshold). */
+    fun isTravelOnline(now: Long = System.currentTimeMillis()): Boolean {
+        val last = lastSeenTravelAt
+        if (last == 0L) return false
+        val thresholdMs = smsFallbackOfflineMinutes.toLong() * 60_000L
+        return (now - last) <= thresholdMs
+    }
 
     // --- Relay (FCM) settings ---
 
@@ -129,6 +160,9 @@ class Prefs(context: Context) {
         private const val KEY_SMS_PREFIX = "sms_command_prefix"
         private const val KEY_SMS_FALLBACK = "sms_fallback_enabled"
         private const val KEY_SMS_FALLBACK_DEST = "sms_fallback_dest"
+        private const val KEY_SMS_FALLBACK_OFFLINE_MIN = "sms_fallback_offline_min"
+        private const val KEY_SMS_FALLBACK_ALWAYS = "sms_fallback_always"
+        private const val KEY_LAST_SEEN_TRAVEL_AT = "last_seen_travel_at"
         private const val KEY_RELAY_PAIRING_ID = "relay_pairing_id"
         private const val KEY_RELAY_SECRET = "relay_secret"
         private const val KEY_RELAY_ROLE = "relay_role"

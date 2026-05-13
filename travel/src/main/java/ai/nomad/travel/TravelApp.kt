@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.util.Log
 import ai.nomad.travel.data.TravelDb
+import ai.nomad.travel.relay.HeartbeatWorker
 import ai.nomad.travel.util.TravelPrefs
 import com.google.firebase.messaging.FirebaseMessaging
 
@@ -18,6 +19,10 @@ class TravelApp : Application() {
         instance = this
         createNotificationChannels()
         warmFcmToken()
+        // Periodic heartbeat to the Home phone so it knows we're alive (used by
+        // its SMS-fallback heuristic). Safe to call unconditionally — the worker
+        // itself checks pairing/credentials each tick.
+        HeartbeatWorker.schedule(this)
     }
 
     private fun warmFcmToken() {

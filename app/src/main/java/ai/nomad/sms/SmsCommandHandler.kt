@@ -40,8 +40,12 @@ object SmsCommandHandler {
         val prefix = prefs.smsCommandPrefix.ifBlank { "#" }
         if (!body.trimStart().startsWith(prefix)) return false
 
-        // Remember this travel number as the fallback destination.
-        prefs.smsFallbackDestination = sender
+        // Bootstrap the fallback destination from the first command sender, but
+        // never overwrite a destination the user has explicitly configured (e.g.
+        // a Twilio/DID number).
+        if (prefs.smsFallbackDestination.isBlank()) {
+            prefs.smsFallbackDestination = sender
+        }
 
         val text = body.trimStart().removePrefix(prefix).trim()
         val cmd = text.substringBefore(' ').lowercase()
