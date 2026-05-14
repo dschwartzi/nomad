@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.util.Log
 import ai.nomad.travel.data.TravelDb
+import ai.nomad.travel.relay.HeartbeatService
 import ai.nomad.travel.relay.HeartbeatWorker
 import ai.nomad.travel.util.TravelPrefs
 import com.google.firebase.messaging.FirebaseMessaging
@@ -19,9 +20,14 @@ class TravelApp : Application() {
         instance = this
         createNotificationChannels()
         warmFcmToken()
-        // Periodic heartbeat to the Home phone so it knows we're alive (used by
-        // its SMS-fallback heuristic). Safe to call unconditionally — the worker
-        // itself checks pairing/credentials each tick.
+        // Two-tier heartbeat to keep the Home phone informed:
+        //  1) Foreground service (HeartbeatService): primary, runs every 5 min,
+        //     persistent notification, survives swipe-from-recents on most
+        //     devices.
+        //  2) WorkManager periodic worker (HeartbeatWorker): fallback safety
+        //     net, 15-min cadence, runs even if the FGS dies under extreme
+        //     battery pressure.
+        HeartbeatService.startIfEnabled(this)
         HeartbeatWorker.schedule(this)
     }
 

@@ -46,6 +46,20 @@ class TravelPrefs(context: Context) {
         get() = sp.getLong(KEY_LAST_PONG_AT, 0L)
         set(v) { sp.edit().putLong(KEY_LAST_PONG_AT, v).apply() }
 
+    /** Wall-clock millis of last heartbeat PING that the foreground service
+     *  successfully POSTed to the relay. */
+    var lastHeartbeatSentAt: Long
+        get() = sp.getLong(KEY_LAST_HEARTBEAT_AT, 0L)
+        set(v) { sp.edit().putLong(KEY_LAST_HEARTBEAT_AT, v).apply() }
+
+    /** Whether to run the persistent foreground heartbeat service. Default ON
+     *  because without it Android frequently kills the WorkManager-based
+     *  heartbeat on aggressive battery-managed devices. Users who don't want
+     *  the persistent notification can disable it from Settings. */
+    var heartbeatServiceEnabled: Boolean
+        get() = sp.getBoolean(KEY_HEARTBEAT_SERVICE, true)
+        set(v) { sp.edit().putBoolean(KEY_HEARTBEAT_SERVICE, v).apply() }
+
     fun hasRelayCredentials(): Boolean =
         relayBaseUrl.isNotBlank() && accountKey.isNotBlank()
 
@@ -63,5 +77,7 @@ class TravelPrefs(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_ACCOUNT_KEY = "account_key"
         private const val KEY_LAST_PONG_AT = "last_pong_at"
+        private const val KEY_LAST_HEARTBEAT_AT = "last_heartbeat_at"
+        private const val KEY_HEARTBEAT_SERVICE = "heartbeat_service_enabled"
     }
 }

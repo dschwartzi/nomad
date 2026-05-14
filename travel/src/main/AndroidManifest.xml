@@ -4,6 +4,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Foreground service: persistent heartbeat to keep us reachable by the
+         home phone. Without this, Android OEM battery managers kill the
+         WorkManager-based heartbeat. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Restart the heartbeat service after device reboots so the user doesn't
+         have to manually open the app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Optional: tap-to-dial uses ACTION_DIAL which doesn't need a permission, but if we
          later support direct calls we'd need CALL_PHONE. We only use ACTION_DIAL here. -->
 
@@ -35,6 +43,27 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- Persistent heartbeat foreground service. The dataSync type is
+             appropriate per Android 14 FGS-type rules: we're keeping a
+             user-initiated bidirectional sync alive. -->
+        <service
+            android:name=".relay.HeartbeatService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Restart the heartbeat service after the device boots or our
+             package is replaced (e.g. user installs an updated APK). -->
+        <receiver
+            android:name=".relay.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>

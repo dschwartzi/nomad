@@ -2,10 +2,16 @@ package ai.nomad.travel.ui
 
 import ai.nomad.shared.relay.RelayMessage
 import ai.nomad.travel.TravelApp
+import ai.nomad.travel.relay.HeartbeatService
 import ai.nomad.travel.relay.TravelRelay
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,6 +22,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,12 +30,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(
@@ -37,11 +49,17 @@ fun SettingsScreen(
     onUnpair: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     var pingMsg by remember { mutableStateOf<String?>(null) }
 
     var url by remember { mutableStateOf(app.prefs.relayBaseUrl) }
     var key by remember { mutableStateOf(app.prefs.accountKey) }
     var relaySaveMsg by remember { mutableStateOf<String?>(null) }
+    var heartbeatOn by remember { mutableStateOf(app.prefs.heartbeatServiceEnabled) }
+    val pm = remember { ctx.getSystemService(PowerManager::class.java) }
+    val unrestricted = remember(heartbeatOn) {
+        pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+    }
 
     Column(
         Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
@@ -96,6 +114,73 @@ fun SettingsScreen(
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Background connection", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Keeps a persistent notification so Android doesn't kill the " +
+                        "background heartbeat. Without this, your phone may stop " +
+                        "checking in with home after a few hours.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Persistent heartbeat (recommended)")
+                    Switch(
+                        checked = heartbeatOn,
+                        onCheckedChange = {
+                            heartbeatOn = it
+                            app.prefs.heartbeatServiceEnabled = it
+                            if (it) HeartbeatService.startIfEnabled(ctx)
+                            else HeartbeatService.stop(ctx)
+                        }
+                    )
+                }
+                val sentAt = app.prefs.lastHeartbeatSentAt
+                val pongAt = app.prefs.lastPongAt
+                Text(
+                    when {
+                        !heartbeatOn -> "Heartbeat off — Android may kill background updates."
+                        pongAt > 0 -> "Last home reply: ${ageLabel(pongAt)}"
+                        sentAt > 0 -> "Last ping sent: ${ageLabel(sentAt)} (no reply yet)"
+                        else -> "Heartbeat starting…"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (heartbeatOn && !unrestricted) {
+                    Text(
+                        "⚠️ Battery optimization is still ON for Nomad. The heartbeat " +
+                            "may be killed after a few hours. Tap below to disable it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    OutlinedButton(onClick = {
+                        try {
+                            // Direct request — Android shows a system dialog. Available since API 23.
+                            @Suppress("BatteryLife")
+                            val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                .setData(Uri.parse("package:${ctx.packageName}"))
+                            ctx.startActivity(i)
+                        } catch (t: Throwable) {
+                            // Some OEMs block the direct request — fall back to settings page.
+                            ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        }
+                    }) { Text("Disable battery optimization") }
+                } else if (heartbeatOn) {
+                    Text(
+                        "✅ Battery optimization disabled for Nomad.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Relay server", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = url,
@@ -134,5 +219,18 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+}
+
+private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+private fun ageLabel(ts: Long): String {
+    val ageMs = System.currentTimeMillis() - ts
+    val mins = ageMs / 60_000
+    return when {
+        ageMs < 60_000 -> "just now"
+        mins < 60 -> "${mins}m ago"
+        mins < 24 * 60 -> "${mins / 60}h${mins % 60}m ago"
+        else -> "at ${timeFmt.format(Date(ts))}"
     }
 }
