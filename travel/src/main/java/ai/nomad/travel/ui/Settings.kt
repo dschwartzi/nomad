@@ -211,8 +211,23 @@ fun SettingsScreen(
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("About", style = MaterialTheme.typography.titleMedium)
+                val versionLabel = remember(ctx) {
+                    try {
+                        val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+                        @Suppress("DEPRECATION")
+                        val code = if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
+                        "Nomad Travel ${pi.versionName} (build $code)"
+                    } catch (t: Throwable) {
+                        "Nomad Travel"
+                    }
+                }
                 Text(
-                    "Nomad Travel — companion app for the Nomad SMS bridge. " +
+                    versionLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Companion app for the Nomad SMS bridge. " +
                         "Receives and sends SMS through your paired home phone via Firebase Cloud Messaging. " +
                         "Calls use this phone's own SIM (the recipient sees this phone's number).",
                     style = MaterialTheme.typography.bodySmall
