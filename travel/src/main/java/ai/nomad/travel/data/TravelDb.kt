@@ -18,15 +18,19 @@ data class TMessage(
     val address: String,
     val body: String,
     val timestamp: Long,
-    /** 0 = inbound (received from address), 1 = outbound (we sent), 2 = pending outbound. */
+    /** 0 = inbound (received from address), 1 = outbound (we sent), 2 = pending outbound,
+     *  3 = failed outbound (home phone could not send). */
     val direction: Int,
     /** Client id used to ack outbound. */
-    val clientId: String? = null
+    val clientId: String? = null,
+    /** When [direction] == FAILED, the error reason reported by the Home phone. */
+    val errorMessage: String? = null
 ) {
     companion object {
         const val IN = 0
         const val OUT = 1
         const val PENDING = 2
+        const val FAILED = 3
     }
 }
 
@@ -54,6 +58,9 @@ interface TMessageDao {
 
     @Query("UPDATE messages SET direction = :direction WHERE clientId = :clientId")
     suspend fun setDirectionByClient(clientId: String, direction: Int)
+
+    @Query("UPDATE messages SET direction = :direction, errorMessage = :error WHERE clientId = :clientId")
+    suspend fun setFailedByClient(clientId: String, direction: Int, error: String?)
 
     @Query("DELETE FROM messages WHERE clientId = :clientId")
     suspend fun deleteByClient(clientId: String)
@@ -97,7 +104,7 @@ interface TContactDao {
 
 @Database(
     entities = [TMessage::class, TConversation::class, TContact::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class TravelDb : RoomDatabase() {
@@ -113,7 +120,11 @@ abstract class TravelDb : RoomDatabase() {
                     context.applicationContext,
                     TravelDb::class.java,
                     "nomad_travel.db"
-                ).build().also { instance = it }
+                )
+                    // v1 -> v2 adds `errorMessage` column; on-device data is just
+                    // a cache, so a destructive migration is acceptable.
+                    .fallbackToDestructiveMigration()
+                    .build().also { instance = it }
             }
         }
     }

@@ -98,10 +98,12 @@ object TravelRelayHandler {
         if (msg.ok == true) {
             app.db.messageDao().setDirectionByClient(cid, TMessage.OUT)
         } else {
-            // Surface the failure inline by replacing the pending row's body with an error marker.
-            // Simplest: delete pending row. UI shows nothing went out.
-            app.db.messageDao().deleteByClient(cid)
-            Log.w(TAG, "send failed: ${msg.error}")
+            // Keep the pending row but flip it to FAILED with the error reason from
+            // Home. The UI surfaces this inline so the user knows exactly why the
+            // message wasn't delivered (e.g. "Home app is not the default SMS app").
+            val err = msg.error?.takeIf { it.isNotBlank() } ?: "Unknown send error"
+            app.db.messageDao().setFailedByClient(cid, TMessage.FAILED, err)
+            Log.w(TAG, "send failed: $err (cid=${cid.take(8)})")
         }
     }
 

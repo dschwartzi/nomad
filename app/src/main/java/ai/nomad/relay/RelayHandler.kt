@@ -3,6 +3,7 @@ package ai.nomad.relay
 import ai.nomad.NomadApp
 import ai.nomad.bridge.ContactResolver
 import ai.nomad.data.ConversationEntity
+import ai.nomad.data.EventEntity
 import ai.nomad.data.MessageEntity
 import ai.nomad.shared.relay.RelayBodyChunker
 import ai.nomad.shared.relay.RelayBodyReassembler
@@ -16,6 +17,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.ContactsContract
+import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,16 +72,41 @@ object RelayHandler {
         val address = msg.address?.takeIf { it.isNotBlank() }
         val body = msg.body?.takeIf { it.isNotBlank() }
         val clientId = msg.clientId
+
+        // Record receipt of the request itself — invaluable for "did H even get it?" debugging.
+        app.db.eventDao().insert(EventEntity(
+            timestamp = System.currentTimeMillis(),
+            level = "INFO",
+            message = "Relay <- SMS_OUT to=${address ?: "?"} bodyLen=${body?.length ?: 0} cid=${clientId?.take(8)}"
+        ))
+
         if (address == null || body == null) {
-            sendOnH(app, RelayMessage(
-                type = RelayMessage.Type.SEND_STATUS,
-                clientId = clientId, ok = false, error = "missing address or body"
+            app.db.eventDao().insert(EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = "WARN",
+                message = "SMS_OUT rejected: missing address or body"
             ))
+            replySendStatus(app, clientId, address, ok = false, error = "missing address or body")
             return
         }
+
+        // Precondition: H must be the default SMS app to send. Android silently revokes this
+        // role on some upgrades / reboots, which causes sendTextMessage to throw or no-op.
+        val defaultPkg = Telephony.Sms.getDefaultSmsPackage(context)
+        if (defaultPkg != context.packageName) {
+            val err = "Home app is not the default SMS app (current: $defaultPkg). " +
+                "Open Nomad on the Home phone and set it as default SMS app."
+            app.db.eventDao().insert(EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = "ERROR",
+                message = "SMS_OUT FAILED to $address: $err"
+            ))
+            replySendStatus(app, clientId, address, ok = false, error = err)
+            return
+        }
+
         val result = SmsSender.send(context, address, body)
         if (result.isSuccess) {
-            // Record outbound in our DB
             val ts = System.currentTimeMillis()
             app.db.messageDao().insert(
                 MessageEntity(address = address, body = body, timestamp = ts, direction = MessageEntity.OUT)
@@ -95,15 +122,51 @@ object RelayHandler {
                 )
             )
             app.prefs.activeThreadAddress = address
+            app.db.eventDao().insert(EventEntity(
+                timestamp = ts,
+                level = "INFO",
+                message = "SMS sent to $address: ${body.take(60)}"
+            ))
+        } else {
+            app.db.eventDao().insert(EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = "ERROR",
+                message = "SMS send to $address FAILED: ${result.exceptionOrNull()?.message}"
+            ))
         }
-        sendOnH(app, RelayMessage(
-            type = RelayMessage.Type.SEND_STATUS,
-            clientId = clientId,
-            ok = result.isSuccess,
-            error = result.exceptionOrNull()?.message,
-            address = address,
-            ts = System.currentTimeMillis()
-        ))
+        replySendStatus(app, clientId, address, ok = result.isSuccess,
+            error = result.exceptionOrNull()?.message)
+    }
+
+    private suspend fun replySendStatus(
+        app: NomadApp,
+        clientId: String?,
+        address: String?,
+        ok: Boolean,
+        error: String?
+    ) {
+        try {
+            sendOnH(app, RelayMessage(
+                type = RelayMessage.Type.SEND_STATUS,
+                clientId = clientId,
+                ok = ok,
+                error = error,
+                address = address,
+                ts = System.currentTimeMillis()
+            ))
+            app.db.eventDao().insert(EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = if (ok) "INFO" else "WARN",
+                message = "Relay -> SEND_STATUS ok=$ok cid=${clientId?.take(8)}" +
+                    (if (error != null) " err=$error" else "")
+            ))
+        } catch (t: Throwable) {
+            app.db.eventDao().insert(EventEntity(
+                timestamp = System.currentTimeMillis(),
+                level = "ERROR",
+                message = "Failed to send SEND_STATUS reply: ${t.message}"
+            ))
+        }
     }
 
     private suspend fun handleHistoryRequest(app: NomadApp, msg: RelayMessage) {

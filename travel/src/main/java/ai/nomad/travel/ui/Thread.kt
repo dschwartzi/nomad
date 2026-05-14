@@ -172,13 +172,23 @@ fun ThreadScreen(
 @Composable
 private fun MessageBubble(m: TMessage) {
     val isMine = m.direction != TMessage.IN
-    val bubbleColor = when {
-        m.direction == TMessage.PENDING -> MaterialTheme.colorScheme.surfaceVariant
-        isMine -> MaterialTheme.colorScheme.primaryContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
+    val bubbleColor = when (m.direction) {
+        TMessage.PENDING -> MaterialTheme.colorScheme.surfaceVariant
+        TMessage.FAILED -> MaterialTheme.colorScheme.errorContainer
+        TMessage.IN -> MaterialTheme.colorScheme.surfaceVariant
+        else -> MaterialTheme.colorScheme.primaryContainer
     }
-    val textColor = if (isMine) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor = when (m.direction) {
+        TMessage.FAILED -> MaterialTheme.colorScheme.onErrorContainer
+        TMessage.IN -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> if (isMine) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val footer = when (m.direction) {
+        TMessage.PENDING -> "Sending…"
+        TMessage.FAILED -> "⚠️ Not sent — " + (m.errorMessage ?: "unknown error")
+        else -> fmtTime(m.timestamp)
+    }
 
     Row(
         Modifier.fillMaxWidth(),
@@ -192,9 +202,9 @@ private fun MessageBubble(m: TMessage) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Text(m.body, color = textColor)
                 Text(
-                    if (m.direction == TMessage.PENDING) "Sending…" else fmtTime(m.timestamp),
+                    footer,
                     style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.6f)
+                    color = textColor.copy(alpha = 0.8f)
                 )
             }
         }
